@@ -1,0 +1,8 @@
+flask
+numpy
+scipy
+librosa
+sounddevice
+soundfile
+tensorflow
+requests
