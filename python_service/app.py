@@ -1,52 +1,47 @@
+import os
 from flask import Flask, jsonify
-import numpy as np
-import tensorflow as tf
-import librosa
-import requests
 
-from audio_capture import record_audio
-from signal_processor import calculate_heart_rate, generate_waveform
+# Default to real AI mode. Set SENSOR_ONLY_MODE=true only if you explicitly want fallback behavior.
+SENSOR_ONLY_MODE = os.getenv("SENSOR_ONLY_MODE", "false").lower() == "true"
+
+if not SENSOR_ONLY_MODE:
+    from yamnet_infer import predict_live
+    from audio_capture import record_audio
+    from signal_processor import generate_waveform
 
 app = Flask(__name__)
-model = tf.keras.models.load_model("heart_model.h5")
 
-NODE_BACKEND = "http://localhost:5000/api/reports"
 
 @app.route("/analyze/<userId>", methods=["POST"])
 def analyze(userId):
+    if SENSOR_ONLY_MODE:
+        return jsonify(
+            {
+                "userId": userId,
+                "diagnosis": "Sensor-Only",
+                "confidence": 0.0,
+                "audioPath": "",
+                "waveform": [],
+            }
+        )
 
-    # 🎙️ record and SAVE audio
-    filepath, signal, fs = record_audio(seconds=5)
-
-    hr = calculate_heart_rate(signal, fs)
-
-    mfcc = librosa.feature.mfcc(y=signal, sr=fs, n_mfcc=40)
-    features = np.mean(mfcc.T, axis=0).reshape(1, -1)
-
-    pred = model.predict(features, verbose=0)
-    diagnosis = "Normal" if pred[0][0] > 0.5 else "Abnormal"
-
-    spo2 = 97 + (hr % 3)
-    bp = f"{110 + hr//2}/{70 + hr//4}"
-    waveform = generate_waveform(signal)
-
-    report = {
-        "userId": userId,
-        "heartRate": hr,
-        "spo2": spo2,
-        "bp": bp,
-        "diagnosis": diagnosis,
-        "audioPath": filepath,
-        "waveform": waveform
-    }
-
-    # 🔥 save to backend DB
     try:
-        requests.post(NODE_BACKEND, json=report)
-    except:
-        print("Backend not reachable")
+        filepath, signal, fs = record_audio(seconds=5)
+        result = predict_live(signal, fs)
+        waveform = generate_waveform(signal)
 
-    return jsonify(report)
+        ai_report = {
+            "userId": userId,
+            "diagnosis": result["diagnosis"],
+            "confidence": result["confidence"],
+            "audioPath": filepath,
+            "waveform": waveform,
+        }
+
+        return jsonify(ai_report)
+    except Exception as e:
+        return jsonify({"error": f"AI analysis failed: {e}"}), 500
+
 
 if __name__ == "__main__":
     app.run(port=6000)

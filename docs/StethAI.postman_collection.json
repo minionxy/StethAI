@@ -1,0 +1,116 @@
+{
+  "info": {
+    "name": "StethAI API",
+    "description": "Auth + vitals + analyze + report stats",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000/api" },
+    { "key": "patientUserId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Signup Patient",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/signup",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Patient One\",\n  \"email\": \"patient_one@test.com\",\n  \"password\": \"Test@12345\",\n  \"role\": \"patient\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Signup Doctor",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/signup",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Doctor One\",\n  \"email\": \"doctor_one@test.com\",\n  \"password\": \"Test@12345\",\n  \"role\": \"doctor\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Login Patient",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"patient_one@test.com\",\n  \"password\": \"Test@12345\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Vitals",
+      "item": [
+        {
+          "name": "Post Live Vitals",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/vitals/live",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"heartRate\": 82,\n  \"spo2\": 97\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Live Vitals",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/vitals/live"
+          }
+        },
+        {
+          "name": "Get Vitals History",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/vitals/history"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analyze + Reports",
+      "item": [
+        {
+          "name": "Analyze Patient",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/analyze/{{patientUserId}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "Get Doctor Stats",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/reports/stats"
+          }
+        },
+        {
+          "name": "Get Patient Reports",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/reports/user/{{patientUserId}}"
+          }
+        }
+      ]
+    }
+  ]
+}

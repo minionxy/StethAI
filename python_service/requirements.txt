@@ -5,4 +5,6 @@ librosa
 sounddevice
 soundfile
 tensorflow
+tensorflow_hub
 requests
+pyserial
