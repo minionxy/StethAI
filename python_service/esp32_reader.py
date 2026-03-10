@@ -2,6 +2,7 @@ import os
 import re
 import time
 from collections import deque
+from statistics import pstdev
 
 import requests
 import serial
@@ -11,11 +12,21 @@ BAUD = int(os.getenv("ESP32_BAUD", "115200"))
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:5000/api/vitals/live")
 AVG_WINDOW = int(os.getenv("SENSOR_AVG_WINDOW", "8"))
 
-HR_RANGE = (40, 190)
-SPO2_RANGE = (80, 100)
+HR_RANGE = (
+    int(os.getenv("HR_MIN", "50")),
+    int(os.getenv("HR_MAX", "140")),
+)
+SPO2_RANGE = (
+    int(os.getenv("SPO2_MIN", "90")),
+    int(os.getenv("SPO2_MAX", "100")),
+)
 NO_FINGER_COOLDOWN_SEC = 3
-MIN_VALID_STREAK_FOR_OK = int(os.getenv("MIN_VALID_STREAK_FOR_OK", "3"))
+MIN_VALID_STREAK_FOR_OK = int(os.getenv("MIN_VALID_STREAK_FOR_OK", "5"))
 INVALID_STREAK_FOR_STATUS = int(os.getenv("INVALID_STREAK_FOR_STATUS", "4"))
+MAX_HR_JUMP = float(os.getenv("MAX_HR_JUMP", "12"))
+MAX_SPO2_JUMP = float(os.getenv("MAX_SPO2_JUMP", "3"))
+MAX_HR_STD = float(os.getenv("MAX_HR_STD", "6"))
+MAX_SPO2_STD = float(os.getenv("MAX_SPO2_STD", "1.8"))
 
 hr_samples = deque(maxlen=AVG_WINDOW)
 spo2_samples = deque(maxlen=AVG_WINDOW)
@@ -94,6 +105,18 @@ def avg(values):
     return sum(values) / len(values)
 
 
+def too_jumpy(hr, spo2):
+    if not hr_samples or not spo2_samples:
+        return False
+    return abs(hr - hr_samples[-1]) > MAX_HR_JUMP or abs(spo2 - spo2_samples[-1]) > MAX_SPO2_JUMP
+
+
+def stable_window():
+    if len(hr_samples) < MIN_VALID_STREAK_FOR_OK or len(spo2_samples) < MIN_VALID_STREAK_FOR_OK:
+        return False
+    return pstdev(hr_samples) <= MAX_HR_STD and pstdev(spo2_samples) <= MAX_SPO2_STD
+
+
 def post_status(session, status, message):
     global last_status_post
     now = time.time()
@@ -113,8 +136,21 @@ def post_status(session, status, message):
 print(f"Listening to ESP32 on {ESP32_PORT} @ {BAUD}...")
 print(f"Posting to {BACKEND_URL} with window={AVG_WINDOW}")
 
-ser = serial.Serial(ESP32_PORT, BAUD, timeout=1)
 session = requests.Session()
+
+
+def connect_serial():
+    while True:
+        try:
+            ser_conn = serial.Serial(ESP32_PORT, BAUD, timeout=1)
+            print(f"Serial connected on {ESP32_PORT}")
+            return ser_conn
+        except serial.SerialException as e:
+            print(f"Cannot open {ESP32_PORT}: {e}. Close Arduino Serial Monitor and retrying...")
+            time.sleep(2)
+
+
+ser = connect_serial()
 
 while True:
     try:
@@ -154,6 +190,12 @@ while True:
             if invalid_streak >= INVALID_STREAK_FOR_STATUS:
                 post_status(session, "invalid", "Reading out of valid range")
             continue
+        if too_jumpy(hr, spo2):
+            invalid_streak += 1
+            valid_streak = 0
+            if invalid_streak >= INVALID_STREAK_FOR_STATUS:
+                post_status(session, "invalid", "Reading unstable. Keep finger still.")
+            continue
 
         invalid_streak = 0
         valid_streak += 1
@@ -162,6 +204,9 @@ while True:
 
         if valid_streak < MIN_VALID_STREAK_FOR_OK:
             post_status(session, "waiting", "Calibrating signal. Keep finger steady.")
+            continue
+        if not stable_window():
+            post_status(session, "waiting", "Signal still stabilizing. Keep finger steady.")
             continue
 
         heart_rate = round(avg(hr_samples), 1)
@@ -182,6 +227,14 @@ while True:
         except requests.RequestException as post_err:
             print("Backend post failed:", post_err)
 
+    except serial.SerialException as e:
+        print(f"Serial error: {e}. Reconnecting...")
+        try:
+            ser.close()
+        except Exception:
+            pass
+        time.sleep(1)
+        ser = connect_serial()
     except Exception as e:
         print("Reader error:", e)
         time.sleep(0.5)

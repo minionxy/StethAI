@@ -19,6 +19,8 @@ let hrWindow = [];
 let spo2Window = [];
 let lastDbSaveAt = 0;
 let lastSaved = { heartRate: 0, spo2: 0, bp: "" };
+let nonOkStreak = 0;
+let lastNonOkStatus = "";
 
 const STABLE_WINDOW = Number(process.env.SENSOR_STABLE_WINDOW || 5);
 const MIN_STABLE_SAMPLES = Number(process.env.SENSOR_MIN_STABLE_SAMPLES || 3);
@@ -35,9 +37,9 @@ function estimateBP(hr) {
 function isValidVitals(heartRate, spo2) {
   return Number.isFinite(heartRate) &&
     Number.isFinite(spo2) &&
-    heartRate >= 40 &&
-    heartRate <= 190 &&
-    spo2 >= 80 &&
+    heartRate >= 35 &&
+    heartRate <= 230 &&
+    spo2 >= 50 &&
     spo2 <= 100;
 }
 
@@ -65,6 +67,31 @@ function setLatestVitals(payload = {}) {
   const message = String(payload.message || "").trim();
 
   if (status && status !== "ok") {
+    if (status === lastNonOkStatus) {
+      nonOkStreak += 1;
+    } else {
+      lastNonOkStatus = status;
+      nonOkStreak = 1;
+    }
+
+    const now = Date.now();
+    const hadRecentOk = latestVitals.status === "ok" &&
+      Number(latestVitals.timestamp || 0) > 0 &&
+      now - Number(latestVitals.timestamp) < 2500;
+
+    // Ignore brief status glitches between valid frames.
+    if (hadRecentOk && nonOkStreak < 3) {
+      latestVitals = {
+        ...latestVitals,
+        status: "waiting",
+        message: "Signal stabilizing. Keep finger steady.",
+        timestamp: now,
+        stable: false,
+        sampleCount: hrWindow.length,
+      };
+      return latestVitals;
+    }
+
     clearStableSamples();
     latestVitals = {
       ...latestVitals,
@@ -80,6 +107,8 @@ function setLatestVitals(payload = {}) {
   const heartRate = Number(payload.heartRate);
   const spo2 = Number(payload.spo2);
   if (!isValidVitals(heartRate, spo2)) return null;
+  nonOkStreak = 0;
+  lastNonOkStatus = "";
 
   pushStableSamples(heartRate, spo2);
 
@@ -154,38 +183,50 @@ async function hydrateLatestFromDbIfNeeded() {
   }
 }
 
+async function persistStableVitalsIfNeeded(updated) {
+  if (!updated || updated.status !== "ok" || !updated.stable) {
+    return false;
+  }
+
+  const now = Date.now();
+  const due = now - lastDbSaveAt >= DB_SAVE_INTERVAL_MS;
+  const hrDelta = Math.abs(Number(lastSaved.heartRate || 0) - Number(updated.heartRate || 0));
+  const spo2Delta = Math.abs(Number(lastSaved.spo2 || 0) - Number(updated.spo2 || 0));
+  const bpChanged = String(lastSaved.bp || "") !== String(updated.bp || "");
+  const changed = hrDelta >= 1 || spo2Delta >= 1 || bpChanged;
+
+  if (!due && !changed) {
+    return false;
+  }
+
+  await SensorVital.create({
+    heartRate: updated.heartRate,
+    spo2: updated.spo2,
+    bp: updated.bp,
+    source: "esp32",
+  });
+
+  lastDbSaveAt = now;
+  lastSaved = { heartRate: updated.heartRate, spo2: updated.spo2, bp: updated.bp };
+  return true;
+}
+
+async function ingestLiveVitals(payload = {}) {
+  const updated = setLatestVitals(payload);
+  if (!updated) {
+    return { updated: null, saved: false };
+  }
+  const saved = await persistStableVitalsIfNeeded(updated);
+  return { updated: getLatestVitals(), saved };
+}
+
 router.post("/live", async (req, res) => {
   try {
-    const updated = setLatestVitals(req.body);
-    if (!updated) {
+    const result = await ingestLiveVitals(req.body);
+    if (!result.updated) {
       return res.status(400).json({ error: "Invalid vitals payload" });
     }
-
-    let saved = false;
-    if (updated.status === "ok" && updated.stable) {
-      const now = Date.now();
-      const due = now - lastDbSaveAt >= DB_SAVE_INTERVAL_MS;
-      const hrDelta = Math.abs(Number(lastSaved.heartRate || 0) - Number(updated.heartRate || 0));
-      const spo2Delta = Math.abs(Number(lastSaved.spo2 || 0) - Number(updated.spo2 || 0));
-      const bpChanged = String(lastSaved.bp || "") !== String(updated.bp || "");
-      const changed = hrDelta >= 1 || spo2Delta >= 1 || bpChanged;
-
-      if (!due && !changed) {
-        return res.json({ success: true, vitals: getLatestVitals(), saved: false });
-      }
-
-      await SensorVital.create({
-        heartRate: updated.heartRate,
-        spo2: updated.spo2,
-        bp: updated.bp,
-        source: "esp32",
-      });
-      lastDbSaveAt = now;
-      lastSaved = { heartRate: updated.heartRate, spo2: updated.spo2, bp: updated.bp };
-      saved = true;
-    }
-
-    res.json({ success: true, vitals: getLatestVitals(), saved });
+    res.json({ success: true, vitals: result.updated, saved: result.saved });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -213,4 +254,4 @@ router.get("/history", async (req, res) => {
   }
 });
 
-module.exports = { router, getLatestVitals, setLatestVitals };
+module.exports = { router, getLatestVitals, setLatestVitals, ingestLiveVitals };

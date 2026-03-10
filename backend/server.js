@@ -6,7 +6,8 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 const connectDB = require("./config/db");
 const reportRoutes = require("./routes/reports");
 const reportCrudRoutes = require("./routes/reportRoutes");
-const { router: vitalsRoute, getLatestVitals } = require("./routes/vitals");
+const { router: vitalsRoute, getLatestVitals, ingestLiveVitals } = require("./routes/vitals");
+const { startSerialReader } = require("./serialReader");
 
 const app = express();
 
@@ -41,7 +42,7 @@ app.post("/api/analyze/:userId", async (req, res) => {
 
     if (vitals?.status !== "ok") {
       return res.status(400).json({
-        error: "No valid live sensor vitals yet. Start esp32_reader and place finger on sensor.",
+        error: "No valid live sensor vitals yet. Keep ESP32 connected and place finger on sensor.",
       });
     }
 
@@ -89,6 +90,22 @@ app.post("/api/analyze/:userId", async (req, res) => {
   }
 });
 
-app.listen(5000, () => {
-  console.log("Backend running on http://localhost:5000");
+const port = Number(process.env.PORT || 5000);
+const serialEnabled = String(process.env.SERIAL_READER_ENABLED || "true").toLowerCase() !== "false";
+
+app.listen(port, () => {
+  console.log(`Backend running on http://localhost:${port}`);
+
+  if (!serialEnabled) {
+    console.log("Serial reader disabled (SERIAL_READER_ENABLED=false)");
+    return;
+  }
+
+  startSerialReader({
+    portPath: process.env.ESP32_PORT || process.env.SERIAL_PORT || "COM4",
+    baudRate: Number(process.env.ESP32_BAUD || process.env.SERIAL_BAUD || 115200),
+    onPayload: async (payload) => {
+      await ingestLiveVitals(payload);
+    },
+  });
 });

@@ -172,7 +172,7 @@ export default function PatientDashboard() {
         .filter((row) => {
           const hr = Number(row.heartRate || 0);
           const spo2 = Number(row.spo2 || 0);
-          return Number.isFinite(hr) && Number.isFinite(spo2) && hr >= 40 && hr <= 190 && spo2 >= 80 && spo2 <= 100;
+          return Number.isFinite(hr) && Number.isFinite(spo2) && hr >= 35 && hr <= 230 && spo2 >= 50 && spo2 <= 100;
         });
 
       if (samples.length >= minSamples) {
@@ -459,7 +459,7 @@ export default function PatientDashboard() {
         {error && <div className="form-error" style={{ marginBottom: "24px" }}>{error}</div>}
         {!sensorReady && (
           <div className="form-error" style={{ marginBottom: "24px" }}>
-            {statusMessage}. Close Arduino Serial Monitor, run `esp32_reader.py`, then keep finger still for 3-5 seconds.
+            {statusMessage}. Keep ESP32 connected via USB, close Arduino Serial Monitor, then keep finger still for 5-10 seconds.
           </div>
         )}
 
